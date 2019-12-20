@@ -11,7 +11,7 @@
 1.一阶段 prepare 行为
 2.二阶段 commit 或 rollback 行为
 
-![http://seata.io/img/overview-4.png][tcc]
+![tcc][tcc.png]
 
 根据两阶段行为模式的不同，我们将分支事务划分为 Automatic (Branch) Transaction Mode 和 Manual (Branch) Transaction Mode.
 
@@ -36,108 +36,128 @@ package main
 import (
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/dllen/g-tcc"
 )
 
 var (
-	db = &FakeDB{
-		flight: flight{StockSeatCount: uint64(3)},
-		hotel:  hotel{StockRoomCount: uint64(1)},
+	db = &MockDB{
+		storage: storage{TotalCount: uint64(3)},
+		coupon:  coupon{TotalCount: uint64(1)},
 	}
 
-	flightService = tcc.NewService(
-		"flight reservation",
-		db.tryReserveFlightSeat,
-		db.confirmFlightSeatReservation,
-		db.cancelFlightSeat,
+	storageService = tcc.NewService(
+		"库存服务",
+		db.tryLockStorage,
+		db.confirmLockStorage,
+		db.cancelStorage,
 	)
 
-	hotelService = tcc.NewService(
-		"hotel reservation",
-		db.tryReserveHotelRoom,
-		db.confirmHotelRoomReservation,
-		db.cancelHotelRoom,
+	couponService = tcc.NewService(
+		"优惠券服务",
+		db.tryLockCoupon,
+		db.confirmLockCoupon,
+		db.cancelCoupon,
 	)
 )
 
-type flight struct {
-	StockSeatCount    uint64
-	ReservedSeatCount uint64
+type storage struct {
+	TotalCount uint64
+	LockCount  uint64
+	sync.Mutex
 }
 
-type hotel struct {
-	StockRoomCount    uint64
-	ReservedRoomCount uint64
+type coupon struct {
+	TotalCount uint64
+	UseCount   uint64
+	sync.Mutex
 }
 
-// FakeDB represents a database for example
-type FakeDB struct {
-	flight flight
-	hotel  hotel
+// MockDB represents a database for example
+type MockDB struct {
+	storage storage
+	coupon  coupon
 }
 
-func (f *FakeDB) tryReserveFlightSeat() error {
-	if f.flight.StockSeatCount == 0 {
-		return fmt.Errorf("no seat")
+func (db *MockDB) tryLockStorage() error {
+	if db.storage.TotalCount == 0 {
+		return fmt.Errorf("没有库存了")
 	}
-	f.flight.StockSeatCount--
+	db.storage.Lock()
+	defer db.storage.Unlock()
+	db.storage.TotalCount--
 	return nil
 }
 
-func (f *FakeDB) confirmFlightSeatReservation() error {
-	f.flight.ReservedSeatCount++
+func (db *MockDB) confirmLockStorage() error {
+	db.storage.Lock()
+	defer db.storage.Unlock()
+	db.storage.LockCount++
 	return nil
 }
 
-func (f *FakeDB) cancelFlightSeat() error {
-	f.flight.StockSeatCount++
+func (db *MockDB) cancelStorage() error {
+	db.storage.Lock()
+	defer db.storage.Unlock()
+	db.storage.TotalCount++
 	return nil
 }
 
-func (f *FakeDB) tryReserveHotelRoom() error {
-	if f.hotel.StockRoomCount == 0 {
-		return fmt.Errorf("no room")
+func (db *MockDB) tryLockCoupon() error {
+	if db.coupon.TotalCount == 0 {
+		return fmt.Errorf("没有优惠券")
 	}
-	f.hotel.StockRoomCount--
+	db.coupon.Lock()
+	defer db.coupon.Unlock()
+	db.coupon.TotalCount--
 	return nil
 }
 
-func (f *FakeDB) confirmHotelRoomReservation() error {
-	f.hotel.ReservedRoomCount++
+func (db *MockDB) confirmLockCoupon() error {
+	db.coupon.Lock()
+	defer db.coupon.Unlock()
+	db.coupon.UseCount++
 	return nil
 }
 
-func (f *FakeDB) cancelHotelRoom() error {
-	f.hotel.StockRoomCount++
+func (db *MockDB) cancelCoupon() error {
+	db.coupon.Lock()
+	defer db.coupon.Unlock()
+	db.coupon.TotalCount++
 	return nil
 }
 
 func main() {
-	doFirstReservation(db)
-	doSecondReservation(db)
+	log.Printf("start db storage %v", db.storage)
+	log.Printf("start db coupon %v", db.coupon)
+	doFirstOrder(db)
+	doSecondOrder(db)
+	log.Printf("end db storage %v", db.storage)
+	log.Printf("end db coupon %v", db.coupon)
 }
 
-func doFirstReservation(db *FakeDB) {
-	orchestrator := tcc.NewDirector([]*tcc.Service{flightService, hotelService}, tcc.WithMaxRetries(1))
-	err := orchestrator.Direct()
+func doFirstOrder(db *MockDB) {
+	director := tcc.NewDirector([]*tcc.Service{storageService, couponService}, tcc.WithMaxRetries(1))
+	err := director.Direct()
 	if err != nil {
-		log.Printf("error happened in 1st reservation: %s", err)
+		log.Printf("error happened in 1st order: %s", err)
 	}
 }
 
-func doSecondReservation(db *FakeDB) {
-	// In second reservation, flight seat is not enough
-	orchestrator := tcc.NewDirector([]*tcc.Service{flightService, hotelService}, tcc.WithMaxRetries(1))
-	err := orchestrator.Direct()
+func doSecondOrder(db *MockDB) {
+	// 第二次提交优惠券数量不足
+	director := tcc.NewDirector([]*tcc.Service{storageService, couponService}, tcc.WithMaxRetries(1))
+	err := director.Direct()
 	if err != nil {
-		log.Printf("error happened in 2nd reservation: %s", err)
+		log.Printf("error happened in 2nd order: %s", err)
 	}
 	tccErr := err.(*tcc.Error)
 	log.Printf("tccErr.Error: %v", tccErr.Error())
 	log.Printf("tccErr.FailedPhase == ErrTryFailed: %v", tccErr.FailedPhase() == tcc.ErrTryFailed)
 	log.Printf("tccErr.ServiceName: %v", tccErr.ServiceName())
 }
+
 ```
 
 ### Documents
@@ -147,7 +167,9 @@ func doSecondReservation(db *FakeDB) {
 ### 参考文档
 
 [Seata](http://seata.io/zh-cn/docs/overview/what-is-seata.html)
+
 [Eventual Data Consistency Solution in ServiceComb - part 3](https://servicecomb.apache.org/docs/distributed_saga_3/)
+
 [Transactions for the REST of Us](https://dzone.com/articles/transactions-for-the-rest-of-us)
 
 ### License
