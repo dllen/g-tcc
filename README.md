@@ -11,7 +11,7 @@
 1.一阶段 prepare 行为
 2.二阶段 commit 或 rollback 行为
 
-![tcc][https://github.com/dllen/g-tcc/blob/master/tcc.png?raw=true]
+![tcc](https://github.com/dllen/g-tcc/blob/master/tcc.png?raw=true)
 
 根据两阶段行为模式的不同，我们将分支事务划分为 Automatic (Branch) Transaction Mode 和 Manual (Branch) Transaction Mode.
 
